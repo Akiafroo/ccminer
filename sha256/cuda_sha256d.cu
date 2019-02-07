@@ -12,6 +12,7 @@
 
 __constant__ static uint32_t __align__(8) c_midstate76[8];
 __constant__ static uint32_t __align__(8) c_dataEnd80[4];
+__constant__ static uint32_t __align__(8) c_dataEnd112[12];
 
 const __constant__  uint32_t __align__(8) c_H256[8] = {
 	0x6A09E667U, 0xBB67AE85U, 0x3C6EF372U, 0xA54FF53AU,
@@ -427,6 +428,65 @@ void sha256d_gpu_hash_shared(const uint32_t threads, const uint32_t startNonce, 
 	}
 }
 
+__global__
+/*__launch_bounds__(256,3)*/
+void sha256d_gpu_hash_shared_le(const uint32_t threads, const uint32_t startNonce, uint32_t *resNonces)
+{
+	const uint32_t thread = (blockDim.x * blockIdx.x + threadIdx.x);
+
+	__shared__ uint32_t s_K[64 * 4];
+	//s_K[thread & 63] = c_K[thread & 63];
+	if (threadIdx.x < 64U) s_K[threadIdx.x] = c_K[threadIdx.x];
+
+	if (thread < threads)
+	{
+		const uint32_t nonce = startNonce + thread;
+
+		uint32_t dat[16];
+		AS_UINT2(dat) = AS_UINT2(c_dataEnd112);
+
+#pragma unroll
+		for (int i = 2; i < 11; i++) {
+			dat[i] = c_dataEnd112[i];
+		}
+
+		dat[11] = nonce;
+		dat[12] = 0x80000000;
+		dat[13] = 0;
+		dat[14] = 0;
+		dat[15] = 0x00000380;
+
+		uint32_t buf[8];
+#pragma unroll
+		for (int i = 0; i<8; i += 2) AS_UINT2(&buf[i]) = AS_UINT2(&c_midstate76[i]);
+		//for (int i=0; i<8; i++) buf[i] = c_midstate76[i];
+
+		sha256_round_body(dat, buf, s_K);
+
+		// second sha256
+
+#pragma unroll
+		for (int i = 0; i<8; i++) dat[i] = buf[i];
+		dat[8] = 0x80000000;
+#pragma unroll
+		for (int i = 9; i<15; i++) dat[i] = 0;
+		dat[15] = 0x100;
+
+#pragma unroll
+		for (int i = 0; i<8; i++) buf[i] = c_H256[i];
+
+		sha256_round_last(dat, buf, s_K);
+
+		// valid nonces
+		uint64_t high = cuda_swab32ll(((uint64_t*)buf)[3]);
+		if (high <= c_target[0]) {
+			printf("%08x %08x - %016llx %016llx - %08x %08x\n", buf[7], buf[6], high, d_target[0], c_target[1], c_target[0]);
+			resNonces[1] = atomicExch(resNonces, nonce);
+			//d_target[0] = high;
+		}
+	}
+}
+
 __host__
 void sha256d_init(int thr_id)
 {
@@ -446,13 +506,29 @@ __host__
 void sha256d_setBlock_80(uint32_t *pdata, uint32_t *ptarget)
 {
 	uint32_t _ALIGN(64) in[16], buf[8], end[4];
-	for (int i=0;i<16;i++) in[i] = cuda_swab32(pdata[i]);
-	for (int i=0;i<8;i++) buf[i] = cpu_H256[i];
-	for (int i=0;i<4;i++) end[i] = cuda_swab32(pdata[16+i]);
+	for (int i = 0; i<16; i++) in[i] = cuda_swab32(pdata[i]);
+	for (int i = 0; i<8; i++) buf[i] = cpu_H256[i];
+	for (int i = 0; i<4; i++) end[i] = cuda_swab32(pdata[16 + i]);
 	sha256_round_body_host(in, buf, cpu_K);
 
 	CUDA_SAFE_CALL(cudaMemcpyToSymbol(c_midstate76, buf, 32, 0, cudaMemcpyHostToDevice));
-	CUDA_SAFE_CALL(cudaMemcpyToSymbol(c_dataEnd80,  end, sizeof(end), 0, cudaMemcpyHostToDevice));
+	CUDA_SAFE_CALL(cudaMemcpyToSymbol(c_dataEnd80, end, sizeof(end), 0, cudaMemcpyHostToDevice));
+	CUDA_SAFE_CALL(cudaMemcpyToSymbol(c_target, &ptarget[6], 8, 0, cudaMemcpyHostToDevice));
+	CUDA_SAFE_CALL(cudaMemcpyToSymbol(d_target, &ptarget[6], 8, 0, cudaMemcpyHostToDevice));
+}
+
+
+__host__
+void sha256d_setBlock_112(uint32_t *pdata, uint32_t *ptarget)
+{
+	uint32_t _ALIGN(64) in[16], buf[8], end[16];
+	for (int i = 0; i<16; i++) in[i] = cuda_swab32(pdata[i]);
+	for (int i = 0; i<8; i++) buf[i] = cpu_H256[i];
+	for (int i = 0; i<11; i++) end[i] = cuda_swab32(pdata[16 + i]);
+	sha256_round_body_host(in, buf, cpu_K);
+
+	CUDA_SAFE_CALL(cudaMemcpyToSymbol(c_midstate76, buf, 32, 0, cudaMemcpyHostToDevice));
+	CUDA_SAFE_CALL(cudaMemcpyToSymbol(c_dataEnd112, end, sizeof(end), 0, cudaMemcpyHostToDevice));
 	CUDA_SAFE_CALL(cudaMemcpyToSymbol(c_target, &ptarget[6], 8, 0, cudaMemcpyHostToDevice));
 	CUDA_SAFE_CALL(cudaMemcpyToSymbol(d_target, &ptarget[6], 8, 0, cudaMemcpyHostToDevice));
 }
@@ -462,12 +538,31 @@ void sha256d_hash_80(int thr_id, uint32_t threads, uint32_t startNonce, uint32_t
 {
 	const uint32_t threadsperblock = 256;
 
-	dim3 grid(threads/threadsperblock);
+	dim3 grid(threads / threadsperblock);
 	dim3 block(threadsperblock);
 
 	CUDA_SAFE_CALL(cudaMemset(d_resNonces[thr_id], 0xFF, 2 * sizeof(uint32_t)));
 	cudaThreadSynchronize();
-	sha256d_gpu_hash_shared <<<grid, block>>> (threads, startNonce, d_resNonces[thr_id]);
+	sha256d_gpu_hash_shared << <grid, block >> > (threads, startNonce, d_resNonces[thr_id]);
+	cudaThreadSynchronize();
+
+	CUDA_SAFE_CALL(cudaMemcpy(resNonces, d_resNonces[thr_id], 2 * sizeof(uint32_t), cudaMemcpyDeviceToHost));
+	if (resNonces[0] == resNonces[1]) {
+		resNonces[1] = UINT32_MAX;
+	}
+}
+
+__host__
+void sha256d_hash_112(int thr_id, uint32_t threads, uint32_t startNonce, uint32_t *resNonces)
+{
+	const uint32_t threadsperblock = 256;
+
+	dim3 grid(threads / threadsperblock);
+	dim3 block(threadsperblock);
+
+	CUDA_SAFE_CALL(cudaMemset(d_resNonces[thr_id], 0xFF, 2 * sizeof(uint32_t)));
+	cudaThreadSynchronize();
+	sha256d_gpu_hash_shared_le << <grid, block >> > (threads, startNonce, d_resNonces[thr_id]);
 	cudaThreadSynchronize();
 
 	CUDA_SAFE_CALL(cudaMemcpy(resNonces, d_resNonces[thr_id], 2 * sizeof(uint32_t), cudaMemcpyDeviceToHost));

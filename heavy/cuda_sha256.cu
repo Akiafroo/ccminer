@@ -198,6 +198,10 @@ __host__ void sha256_cpu_setBlock(void *data, int len)
 		memset(&msgBlock[20], 0, 32); // vorläufig  Nullen anstatt der Hefty1 Hashes einfüllen
 		msgBlock[28] |= 0x80;
 		msgBlock[31] = 896; // bitlen
+	} else if (len == 112) {
+		memset(&msgBlock[28], 0, 32); // vorläufig  Nullen anstatt der Hefty1 Hashes einfüllen
+		msgBlock[28] |= 0x80;
+		msgBlock[31] = 896; // bitlen 
 	}
 
 	for(int i=0;i<31;i++) // Byteorder drehen
@@ -276,7 +280,9 @@ __host__ void sha256_cpu_hash(int thr_id, uint32_t threads, int startNounce)
 
 	if (BLOCKSIZE == 84)
 		sha256_gpu_hash<84><<<grid, block, shared_size>>>(threads, startNounce, d_hash2output[thr_id], heavy_heftyHashes[thr_id], heavy_nonceVector[thr_id]);
-	else if (BLOCKSIZE == 80) {
+	else if (BLOCKSIZE == 112) {
+		sha256_gpu_hash<112> << <grid, block, shared_size >> >(threads, startNounce, d_hash2output[thr_id], heavy_heftyHashes[thr_id], heavy_nonceVector[thr_id]);
+	} else if (BLOCKSIZE == 80) {
 		sha256_gpu_hash<80><<<grid, block, shared_size>>>(threads, startNounce, d_hash2output[thr_id], heavy_heftyHashes[thr_id], heavy_nonceVector[thr_id]);
 	}
 }
