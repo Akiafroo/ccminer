@@ -37,7 +37,7 @@
 #include "elist.h"
 
 #include "crypto/xmr-rpc.h"
-
+bool g_metronome_sleep;
 extern pthread_mutex_t stratum_sock_lock;
 extern pthread_mutex_t stratum_work_lock;
 extern bool opt_debug_diff;
@@ -1454,6 +1454,29 @@ static bool stratum_notify(struct stratum_ctx *sctx, json_t *params)
 	get_currentalgo(algo, sizeof(algo));
 	bool has_claim = !strcmp(algo, "lbry");
 	bool has_roots = !strcmp(algo, "phi2") && json_array_size(params) == 10;
+	bool has_metronome = !strcmp(algo, "sha256d-le") && json_array_size(params) == 10; 
+	if (!strcmp(algo, "sha256d") && json_array_size(params) == 10) {
+		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
+		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
+		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
+		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
+		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
+		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
+		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
+		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
+		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
+		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
+		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
+		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
+		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
+		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
+		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
+		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
+		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
+		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
+		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
+		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
+	}
 
 	if (sctx->is_equihash) {
 		return equi_stratum_notify(sctx, params);
@@ -1484,11 +1507,34 @@ static bool stratum_notify(struct stratum_ctx *sctx, json_t *params)
 	nbits = json_string_value(json_array_get(params, p++));
 	stime = json_string_value(json_array_get(params, p++));
 	clean = json_is_true(json_array_get(params, p)); p++;
+	//Added for BLE
+	if (has_metronome) {
+		extradata = json_string_value(json_array_get(params, p)); p++;
+
+		if (strlen(extradata) == 0 ) {
+			if (!g_metronome_sleep) {
+				applog(LOG_WARNING,"Entering Sleep Mode..");
+				g_metronome_sleep = true;
+			}
+			//g_metronome_sleep = false;
+			extradata = "0000000000000000000000000000000000000000000000000000000000000000";
+		} else {
+			if (g_metronome_sleep) {
+				applog(LOG_WARNING, "Starting Job..");
+				g_metronome_sleep = false;
+			}
+		}
+
+		if (!extradata) {
+			applog(LOG_ERR, "Stratum notify: invalid metronome parameter: %s", extradata);
+			goto out;
+		}
+	}
 	nreward = json_string_value(json_array_get(params, p++));
 
 	if (!job_id || !prevhash || !coinb1 || !coinb2 || !version || !nbits || !stime ||
 	    strlen(prevhash) != 64 || strlen(version) != 8 ||
-	    strlen(nbits) != 8 || strlen(stime) != 8) {
+	    strlen(nbits) != 8 || strlen(stime) != 8 || (has_metronome && strlen(extradata) != 64)) {
 		applog(LOG_ERR, "Stratum notify: invalid parameters");
 		goto out;
 	}
@@ -1538,6 +1584,8 @@ static bool stratum_notify(struct stratum_ctx *sctx, json_t *params)
 	hex2bin(sctx->job.prevhash, prevhash, 32);
 	if (has_claim) hex2bin(sctx->job.extra, extradata, 32);
 	if (has_roots) hex2bin(sctx->job.extra, extradata, 64);
+
+	if (has_metronome) hex2bin(sctx->job.extra, extradata, 32);
 
 	sctx->job.height = getblocheight(sctx);
 
@@ -1866,6 +1914,11 @@ bool stratum_handle_method(struct stratum_ctx *sctx, const char *s)
 		ret = stratum_pong(sctx, id);
 		goto out;
 	}
+	if (!strcasecmp(method, "mining.pong")) { // cgminer 4.7.1+
+		if (opt_debug) applog(LOG_DEBUG, "Pool pong");
+		ret = true;
+		goto out;
+	}
 	if (!strcasecmp(method, "mining.set_difficulty")) {
 		ret = stratum_set_difficulty(sctx, params);
 		goto out;
@@ -1919,6 +1972,8 @@ out:
 
 	return ret;
 }
+
+
 
 struct thread_q *tq_new(void)
 {

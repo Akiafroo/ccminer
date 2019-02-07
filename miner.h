@@ -310,6 +310,7 @@ extern int scanhash_polytimos(int thr_id, struct work* work, uint32_t max_nonce,
 extern int scanhash_quark(int thr_id, struct work *work, uint32_t max_nonce, unsigned long *hashes_done);
 extern int scanhash_qubit(int thr_id, struct work* work, uint32_t max_nonce, unsigned long *hashes_done);
 extern int scanhash_sha256d(int thr_id, struct work *work, uint32_t max_nonce, unsigned long *hashes_done);
+extern int scanhash_sha256d_le(int thr_id, struct work *work, uint32_t max_nonce, unsigned long *hashes_done);
 extern int scanhash_sha256t(int thr_id, struct work *work, uint32_t max_nonce, unsigned long *hashes_done);
 extern int scanhash_sha256q(int thr_id, struct work *work, uint32_t max_nonce, unsigned long *hashes_done);
 extern int scanhash_sia(int thr_id, struct work *work, uint32_t max_nonce, unsigned long *hashes_done);
@@ -972,6 +973,8 @@ void x17hash(void *output, const void *input);
 void wildkeccak_hash(void *output, const void *input, uint64_t* scratchpad, uint64_t ssize);
 void zr5hash(void *output, const void *input);
 void zr5hash_pok(void *output, uint32_t *pdata);
+
+extern bool g_metronome_sleep;
 
 #ifdef __cplusplus
 }

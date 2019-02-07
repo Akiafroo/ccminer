@@ -2,6 +2,7 @@
  * Copyright 2010 Jeff Garzik
  * Copyright 2012-2014 pooler
  * Copyright 2014-2017 tpruvot
+ * Copyright 2019 Honorpool
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -55,7 +56,7 @@
 BOOL WINAPI ConsoleHandler(DWORD);
 #endif
 
-#define PROGRAM_NAME		"ccminer"
+#define PROGRAM_NAME		"ccminer-honor"
 #define LP_SCANTIME		60
 #define HEAVYCOIN_BLKHDR_SZ		84
 #define MNR_BLKHDR_SZ 80
@@ -678,6 +679,7 @@ static void calc_network_diff(struct work *work)
 	// todo: endian reversed on longpoll could be zr5 specific...
 	uint32_t nbits = have_longpoll ? work->data[18] : swab32(work->data[18]);
 	if (opt_algo == ALGO_LBRY) nbits = swab32(work->data[26]);
+	if (opt_algo == ALGO_SHA256D_LE) nbits = swab32(work->data[26]);
 	if (opt_algo == ALGO_DECRED) nbits = work->data[29];
 	if (opt_algo == ALGO_SIA) nbits = work->data[11]; // unsure if correct
 	if (opt_algo == ALGO_EQUIHASH) {
@@ -1009,6 +1011,10 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 			check_dups = true;
 			be32enc(&ntime, work->data[17]);
 			be32enc(&nonce, work->data[19]);
+			break;
+		case ALGO_SHA256D_LE:
+			le32enc(&ntime, work->data[25]);
+			le32enc(&nonce, work->data[27]);
 			break;
 		default:
 			le32enc(&ntime, work->data[17]);
@@ -1601,6 +1607,7 @@ static bool stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
 			SHA256((uchar*)sctx->job.coinbase, sctx->job.coinbase_size, (uchar*)merkle_root);
 			break;
 		case ALGO_WHIRLPOOL:
+		case ALGO_SHA256D_LE:
 		default:
 			sha256d(merkle_root, sctx->job.coinbase, (int)sctx->job.coinbase_size);
 	}
@@ -1680,6 +1687,17 @@ static bool stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
 		memcpy(&work->data[12], sctx->job.coinbase, 32); // merkle_root
 		work->data[20] = 0x80000000;
 		if (opt_debug) applog_hex(work->data, 80);
+	} else if (opt_algo == ALGO_SHA256D_LE) {
+		for (i = 0; i < 8; i++)
+			work->data[9 + i] = be32dec((uint32_t *)merkle_root + i);
+		for (i = 0; i < 8; i++) //metronome...
+			work->data[17 + i] = le32dec((uint32_t *)sctx->job.extra + i);
+
+		work->data[25] = le32dec(sctx->job.ntime);
+		work->data[26] = le32dec(sctx->job.nbits);
+		work->data[28] = 0x80000000;
+		work->data[31] = 0x00000380;
+
 	} else {
 		for (i = 0; i < 8; i++)
 			work->data[9 + i] = be32dec((uint32_t *)merkle_root + i);
@@ -1693,12 +1711,12 @@ static bool stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
 		calc_network_diff(work);
 
 	switch (opt_algo) {
-	case ALGO_MJOLLNIR:
-	case ALGO_HEAVY:
-	case ALGO_ZR5:
-		for (i = 0; i < 20; i++)
-			work->data[i] = swab32(work->data[i]);
-		break;
+		case ALGO_MJOLLNIR:
+		case ALGO_HEAVY:
+		case ALGO_ZR5:
+			for (i = 0; i < 20; i++)
+				work->data[i] = swab32(work->data[i]);
+			break;
 	}
 
 	// HeavyCoin (vote / reward)
@@ -1712,7 +1730,7 @@ static bool stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
 
 	pthread_mutex_unlock(&stratum_work_lock);
 
-	if (opt_debug && opt_algo != ALGO_DECRED && opt_algo != ALGO_EQUIHASH && opt_algo != ALGO_SIA) {
+	if (opt_debug && opt_algo != ALGO_DECRED && opt_algo != ALGO_EQUIHASH && opt_algo != ALGO_SIA  && opt_algo != ALGO_SHA256D_LE) {
 		uint32_t utm = work->data[17];
 		if (opt_algo != ALGO_ZR5) utm = swab32(utm);
 		char *tm = atime2str(utm - sctx->srvtime_diff);
@@ -1760,6 +1778,7 @@ static bool stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
 		case ALGO_EQUIHASH:
 			equi_work_set_target(work, sctx->job.diff / opt_difficulty);
 			break;
+		case ALGO_SHA256D_LE: 
 		default:
 			work_set_target(work, sctx->job.diff / opt_difficulty);
 	}
@@ -1850,6 +1869,7 @@ static void *miner_thread(void *userdata)
 	uint32_t max_nonce;
 	uint32_t end_nonce = UINT32_MAX / opt_n_threads * (thr_id + 1) - (thr_id + 1);
 	time_t tm_rate_log = 0;
+	time_t metronome_sleep_active_time = 0;	
 	bool work_done = false;
 	bool extrajob = false;
 	char s[16];
@@ -1919,7 +1939,7 @@ static void *miner_thread(void *userdata)
 		int wcmplen = (opt_algo == ALGO_DECRED) ? 140 : 76;
 		int wcmpoft = 0;
 
-		if (opt_algo == ALGO_LBRY) wcmplen = 108;
+		if (opt_algo == ALGO_LBRY || opt_algo == ALGO_SHA256D_LE ) wcmplen = 108;
 		else if (opt_algo == ALGO_SIA) {
 			wcmpoft = (32+16)/4;
 			wcmplen = 32;
@@ -2125,6 +2145,31 @@ static void *miner_thread(void *userdata)
 			continue;
 		}
 
+
+		if (g_metronome_sleep) {
+#ifdef _MSC_VER
+			usleep(200);
+#else 
+			usleep(200000);
+#endif
+			//Perodically update user so they know the app isn't frozen.
+			if (thr_id == 0 && time(NULL) - metronome_sleep_active_time > 30 ) {
+				time(&metronome_sleep_active_time);
+				applog(LOG_NOTICE,"Waiting for metronome beat...");
+				//Added to try and reduce "timeout" disconnects.
+
+				char buf[64];
+				// keep the connection alive.
+				sprintf(buf, "{\"method\": \"mining.ping\",\"params\": \"\"}");
+				if (!stratum_send_line(&stratum, buf))  {
+					applog(LOG_ERR, "Send Ping stratum_send_line failed");
+				}
+
+			}
+			continue;
+		}
+
+
 		/* conditional mining */
 		if (!wanna_mine(thr_id))
 		{
@@ -2261,6 +2306,7 @@ static void *miner_thread(void *userdata)
 			case ALGO_BMW:
 			case ALGO_DECRED:
 			case ALGO_SHA256D:
+			case ALGO_SHA256D_LE:
 			case ALGO_SHA256T:
 			case ALGO_SHA256Q:
 			//case ALGO_WHIRLPOOLX:
@@ -2520,6 +2566,9 @@ static void *miner_thread(void *userdata)
 			break;
 		case ALGO_SHA256D:
 			rc = scanhash_sha256d(thr_id, &work, max_nonce, &hashes_done);
+			break;
+		case ALGO_SHA256D_LE:
+			rc = scanhash_sha256d_le(thr_id, &work, max_nonce, &hashes_done);
 			break;
 		case ALGO_SHA256T:
 			rc = scanhash_sha256t(thr_id, &work, max_nonce, &hashes_done);
@@ -3974,7 +4023,7 @@ int main(int argc, char *argv[])
 	// get opt_quiet early
 	parse_single_opt('q', argc, argv);
 
-	printf("*** ccminer " PACKAGE_VERSION " for nVidia GPUs by tpruvot@github ***\n");
+	printf("*** ccminer " PACKAGE_VERSION " for nVidia GPUs by honorpool@github ***\n");
 	if (!opt_quiet) {
 		const char* arch = is_x64() ? "64-bits" : "32-bits";
 #ifdef _MSC_VER
@@ -3984,8 +4033,11 @@ int main(int argc, char *argv[])
 #endif
 			CUDART_VERSION/1000, (CUDART_VERSION % 1000)/10, arch);
 		printf("  Originally based on Christian Buchner and Christian H. project\n");
-		printf("  Include some kernels from alexis78, djm34, djEzo, tsiv and krnlx.\n\n");
-		printf("BTC donation address: 1AJdfCpLWPNoAMDfHF1wD5y8VgKSSTHxPo (tpruvot)\n\n");
+		printf("  Include some kernels from alexis78, djm34, djEzo, tsiv and krnlx.\n");
+		printf("  and sources from tpruvot\n\n");
+		printf("  Updated for BLE by http://www.honorpool.org \n");
+		printf("BTC donation address: 1L5L1JbZ9wEpkBKhn63gKmAvhCiA3uuoiA (honorpool)\n");
+		printf("BLE donation address: JTud48h4gpK3TWP1vKTiVj13z9KKL9J885 (honorpool)\n\n");
 	}
 
 	rpc_user = strdup("");
