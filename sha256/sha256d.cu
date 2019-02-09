@@ -136,7 +136,6 @@ extern "C" int scanhash_sha256d_le(int thr_id, struct work* work, uint32_t max_n
 	uint32_t _ALIGN(64) endiandata[28];
 	uint32_t *pdata = work->data;
 	uint32_t *ptarget = work->target;
-	gpulog(LOG_INFO, thr_id, "work target: %08x", ptarget[7]);
 	const uint32_t first_nonce = pdata[27];
 	uint32_t throughput = cuda_default_throughput(thr_id, 1U << 25);
 	if (init[thr_id]) throughput = min(throughput, (max_nonce - first_nonce));
