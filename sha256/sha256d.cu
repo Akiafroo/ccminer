@@ -182,7 +182,7 @@ extern "C" int scanhash_sha256d_le(int thr_id, struct work* work, uint32_t max_n
 				work_set_target_ratio(work, vhash);
 				if (work->nonces[1] != UINT32_MAX) {
 					endiandata[27] = swab32(work->nonces[1]);
-					sha256d_hash(vhash, endiandata);
+					sha256d_hash_le(vhash, endiandata);
 					if (vhash[7] <= ptarget[7] && fulltest(vhash, ptarget)) {
 						work->valid_nonces++;
 						bn_set_target_ratio(work, vhash, 1);
@@ -198,7 +198,7 @@ extern "C" int scanhash_sha256d_le(int thr_id, struct work* work, uint32_t max_n
 				gpu_increment_reject(thr_id);
 				if (!opt_quiet)
 					gpulog(LOG_WARNING, thr_id, "result for %08x does not validate on CPU!", work->nonces[0]);
-				pdata[19] = work->nonces[0] + 1;
+				pdata[27] = work->nonces[0] + 1;
 				continue;
 			}
 		}
