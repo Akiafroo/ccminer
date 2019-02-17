@@ -1458,27 +1458,9 @@ static bool stratum_notify(struct stratum_ctx *sctx, json_t *params)
 	get_currentalgo(algo, sizeof(algo));
 	bool has_claim = !strcmp(algo, "lbry");
 	bool has_roots = !strcmp(algo, "phi2") && json_array_size(params) == 10;
-	bool has_metronome = !strcmp(algo, "sha256d-le") && json_array_size(params) == 10; 
-	if (!strcmp(algo, "sha256d") && json_array_size(params) == 10) {
-		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
-		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
-		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
-		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
-		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
-		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
-		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
-		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
-		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
-		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
-		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
-		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
-		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
-		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
-		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
-		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
-		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
-		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
-		applog(LOG_ERR, "Stratum notify: Extra segments present, are you using the correct algo?");
+	bool has_metronome = !strcmp(algo, "sha256d-le"); 
+	if (!strcmp(algo, "sha256d") && json_array_size(params) > 9) {
+		applog(LOG_ERR, "Stratum notify: segments missing present, are you using the correct algo?");
 		applog(LOG_NOTICE, "Stratum notify: For BitcoinLE please use \"-a sha256d-le\"");
 	}
 
@@ -1521,7 +1503,7 @@ static bool stratum_notify(struct stratum_ctx *sctx, json_t *params)
 				g_metronome_sleep = true;
 			}
 			//g_metronome_sleep = false;
-			extradata = "0000000000000000000000000000000000000000000000000000000000000000";
+			extradata = "0000000000000000000100000000000000000000001000000000000000000000";
 		} else {
 			if (g_metronome_sleep) {
 				applog(LOG_WARNING, "Starting Job..");
@@ -1961,6 +1943,11 @@ bool stratum_handle_method(struct stratum_ctx *sctx, const char *s)
 	}
 	if (sctx->rpc2 && !strcasecmp(method, "job")) { // xmr/bbr
 		ret = rpc2_stratum_job(sctx, id, params);
+		goto out;
+	}
+	//Added Case to support BLEPOOL.
+	if (!strcasecmp(method, "mining.sleep")) {
+		g_metronome_sleep = true;
 		goto out;
 	}
 
