@@ -1233,6 +1233,10 @@ start:
 	s = (char*)malloc(128 + (sctx->session_id ? strlen(sctx->session_id) : 0));
 	if (retry)
 		sprintf(s, "{\"id\": 1, \"method\": \"mining.subscribe\", \"params\": []}");
+	else if (strstr(sctx->url, "blepool")) { //Force BLEPool client name.. 
+		sprintf(s, "{\"id\": 1, \"method\": \"mining.subscribe\", \"params\": [\"" "ccminerle/2.3.0" "\", \"%s\"]}", sctx->session_id);
+		g_metronome_sleep = true;
+	}
 	else if (sctx->session_id)
 		sprintf(s, "{\"id\": 1, \"method\": \"mining.subscribe\", \"params\": [\"" USER_AGENT "\", \"%s\"]}", sctx->session_id);
 	else
